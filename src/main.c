@@ -18,8 +18,11 @@
 #define ADC_READ_INTERVAL_MS 1000
 #define STM32_ADC_CHANNEL_ID DT_IO_CHANNELS_INPUT_BY_IDX(ADC_NODE, 0)
 #define STM32_ADC_LL_CHANNEL __LL_ADC_DECIMAL_NB_TO_CHANNEL(STM32_ADC_CHANNEL_ID)
+#define STM32_ADC_RESOLUTION 12U
+#define STM32_ADC_RAW_MAX ((1U << STM32_ADC_RESOLUTION) - 1U)
 #define STM32_ADC_OVERSAMPLING_RATIO 256U
 #define STM32_ADC_OVERSAMPLING_SHIFT 4U
+#define STM32_ADC_OVERSAMPLING_DIVISOR (1U << STM32_ADC_OVERSAMPLING_SHIFT)
 #define STM32_ADC_READY_TIMEOUT_US 10000U
 #define DAC_NODE DT_NODELABEL(dac1)
 #define DAC_CHANNEL_ID 1U
@@ -244,6 +247,56 @@ static uint32_t stm32_ll_oversampling_shift(void)
 	}
 }
 
+static uint16_t stm32_ll_adc_raw16_to_raw12(uint16_t raw_16)
+{
+	uint32_t raw_12;
+
+	raw_12 = ((uint32_t)raw_16 + (STM32_ADC_OVERSAMPLING_DIVISOR / 2U)) /
+		 STM32_ADC_OVERSAMPLING_DIVISOR;
+
+	if (raw_12 > STM32_ADC_RAW_MAX) {
+		return STM32_ADC_RAW_MAX;
+	}
+
+	return (uint16_t)raw_12;
+}
+
+static int stm32_ll_adc_raw16_to_centi_millivolts(uint16_t raw_16,
+						  int32_t *centi_mv)
+{
+	int64_t value;
+	int32_t vref_mv;
+	uint32_t resolution_scale;
+	int ret;
+
+	if (!adc_channel.channel_cfg_dt_node_exists) {
+		return -ENOTSUP;
+	}
+
+	if (adc_channel.channel_cfg.reference == ADC_REF_INTERNAL) {
+		vref_mv = adc_ref_internal(adc_channel.dev);
+	} else {
+		vref_mv = adc_channel.vref_mv;
+	}
+
+	if (vref_mv == 0) {
+		return -ENOTSUP;
+	}
+
+	value = (int64_t)raw_16 * vref_mv * 100;
+	ret = adc_gain_invert_64(adc_channel.channel_cfg.gain, &value);
+	if (ret < 0) {
+		return ret;
+	}
+
+	resolution_scale = 1U << (STM32_ADC_RESOLUTION +
+				  STM32_ADC_OVERSAMPLING_SHIFT);
+	value = (value + (resolution_scale / 2U)) / resolution_scale;
+
+	*centi_mv = (int32_t)value;
+	return 0;
+}
+
 static void stm32_ll_print_calibration(void)
 {
 	printk("STM32 LL ADC calibration: factor=%lu CALFACT=0x%08lx\n",
@@ -294,7 +347,7 @@ int main(void)
 	while (true) {
 		uint16_t raw_12;
 		uint16_t raw_16;
-		int32_t val_mv;
+		int32_t val_centi_mv;
 
 		err = stm32_ll_adc_read_raw16(&raw_16);
 		if (err < 0) {
@@ -303,8 +356,7 @@ int main(void)
 			continue;
 		}
 
-		raw_12 = raw_16 >> STM32_ADC_OVERSAMPLING_SHIFT;
-		val_mv = raw_12;
+		raw_12 = stm32_ll_adc_raw16_to_raw12(raw_16);
 
 		printk("[%u] ll_channel=%u sampling=%s cycles ovs_ratio=%u "
 		       "shift=%u raw16=%u raw12=%u dac_dor1=%lu",
@@ -312,11 +364,13 @@ int main(void)
 		       STM32_ADC_OVERSAMPLING_RATIO, STM32_ADC_OVERSAMPLING_SHIFT,
 		       raw_16, raw_12, DAC1->DOR1);
 
-		err = adc_raw_to_millivolts_dt(&adc_channel, &val_mv);
+		err = stm32_ll_adc_raw16_to_centi_millivolts(raw_16,
+							     &val_centi_mv);
 		if (err < 0) {
 			printk(" mV=N/A\n");
 		} else {
-			printk(" voltage=%" PRId32 " mV\n", val_mv);
+			printk(" voltage=%" PRId32 ".%02" PRId32 " mV\n",
+			       val_centi_mv / 100, val_centi_mv % 100);
 		}
 
 		k_msleep(ADC_READ_INTERVAL_MS);
