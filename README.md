@@ -1,5 +1,18 @@
 # NUCLEO-G071RB ADC 1채널 예제
 
+## Zephyr setting 
+cd %HOMEPATH%
+py -3.12 -m venv zephyrproject\.venv
+zephyrproject\.venv\Scripts\activate.bat
+cd zephyrproject
+
+if you need,
+
+west update
+west zephyr-export
+
+## Notice
+
 NUCLEO-G071RB에서 Arduino A0를 1초마다 ADC로 읽고 UART 콘솔에 raw 값과 mV 값을 출력합니다.
 G431RB용 예제와 최대한 같은 구조로 만들었고, ADC 채널 번호만 G071RB에 맞게 `0`으로 사용합니다.
 
