@@ -1,6 +1,7 @@
 # NUCLEO-G071RB ADC 1채널 예제
 
 ## Zephyr setting 
+``` 터미날
 cd %HOMEPATH%
 py -3.12 -m venv zephyrproject\.venv
 zephyrproject\.venv\Scripts\activate.bat
@@ -10,6 +11,7 @@ if you need,
 
 west update
 west zephyr-export
+```
 
 ## Notice
 
